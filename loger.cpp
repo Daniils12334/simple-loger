@@ -16,9 +16,8 @@ void sendToDiscord(const std::string& message) {
     CURL* curl;
     CURLcode res;
     curl = curl_easy_init();
-//https://discord.com/api/webhooks/1334124265104085044/i4F99g9T1-5rydCr7qbgJ5WHLCPkdpR-098MCv4eFU9BJzwCTvrp7IeIe96_ICTepj5K
     if (curl) {
-        const std::string webhook_url = "";
+        const std::string webhook_url = "webhook";
 
         // Escape newlines and quotes to keep valid JSON format
         std::string json_payload = R"({"content": ")" + message + R"("})";
