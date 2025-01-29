@@ -16,8 +16,9 @@ void sendToDiscord(const std::string& message) {
     CURL* curl;
     CURLcode res;
     curl = curl_easy_init();
+//https://discord.com/api/webhooks/1334124265104085044/i4F99g9T1-5rydCr7qbgJ5WHLCPkdpR-098MCv4eFU9BJzwCTvrp7IeIe96_ICTepj5K
     if (curl) {
-        const std::string webhook_url = "webhook";
+        const std::string webhook_url = "";
 
         // Escape newlines and quotes to keep valid JSON format
         std::string json_payload = R"({"content": ")" + message + R"("})";
@@ -87,12 +88,13 @@ cv::Mat captureScreenRegion(int x, int y, int width, int height) {
     }
 
     // Optional: Increase contrast for better OCR
-    cv::adaptiveThreshold(grayMat, grayMat, 255, cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY, 9, 2);
+    // cv::adaptiveThreshold(grayMat, grayMat, 255, cv::ADAPTIVE_THRESH_MEAN_C, cv::THRESH_BINARY, 11, 2);
 
     // Debugging: Show the processed image
+#ifdef DEBUG
     cv::imshow("Processed Frame", grayMat);
     cv::waitKey(1);
-
+#endif
     XDestroyImage(img);
     XCloseDisplay(display);
 
@@ -135,9 +137,6 @@ int main() {
             continue;
         }
 
-        // Display the captured frame
-        cv::imshow("Captured Frame", capturedFrame);
-        cv::waitKey(1); // Refresh the image window
 
         std::string currentText = extractTextFromImage(capturedFrame);
 
