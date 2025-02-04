@@ -13,36 +13,51 @@
 #include <cctype>
 #include <unordered_set>
 #include <ctime>
+#include <map>
 
 #define DEBUG
 
-std::unordered_set<std::string> recentMessages;
+std::unordered_set<std::string> recentTimes;
 
-void sendToDiscord(const std::string& message) {
+// Function to send a message to Discord with retries
+bool sendToDiscordWithRetry(const std::string& message, int maxRetries = 3) {
     CURL* curl;
     CURLcode res;
-    curl = curl_easy_init();
-    if (curl) {
-        const std::string webhook_url = "ENTER_YOUR_HOOK";
+    bool success = false;
 
-        // Escape newlines and quotes to keep valid JSON format
-        std::string json_payload = R"({"content": ")" + message + R"("})";
-        json_payload.erase(std::remove(json_payload.begin(), json_payload.end(), '\n'), json_payload.end()); // Remove newlines
+    for (int retry = 0; retry < maxRetries; retry++) {
+        curl = curl_easy_init();
+        if (curl) {
+            const std::string webhook_url = "https://discord.com/api/webhooks/1334124265104085044/i4F99g9T1-5rydCr7qbgJ5WHLCPkdpR-098MCv4eFU9BJzwCTvrp7IeIe96_ICTepj5K";
 
-        struct curl_slist* headers = nullptr;
-        headers = curl_slist_append(headers, "Content-Type: application/json");
+            // Escape newlines and quotes to keep valid JSON format
+            std::string json_payload = R"({"content": ")" + message + R"("})";
+            json_payload.erase(std::remove(json_payload.begin(), json_payload.end(), '\n'), json_payload.end()); // Remove newlines
 
-        curl_easy_setopt(curl, CURLOPT_URL, webhook_url.c_str());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_payload.c_str());
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
 
-        res = curl_easy_perform(curl);
-        if (res != CURLE_OK)
-            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+            curl_easy_setopt(curl, CURLOPT_URL, webhook_url.c_str());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_payload.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-        curl_easy_cleanup(curl);
-        curl_slist_free_all(headers);
+            res = curl_easy_perform(curl);
+            if (res == CURLE_OK) {
+                success = true;
+                break; // Success, exit retry loop
+            } else {
+                std::cerr << "curl_easy_perform() failed (retry " << retry + 1 << "): " << curl_easy_strerror(res) << std::endl;
+            }
+
+            curl_easy_cleanup(curl);
+            curl_slist_free_all(headers);
+        }
+
+        // Wait for a short time before retrying
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
+
+    return success;
 }
 
 std::string normalizeText(const std::string& text) {
@@ -52,9 +67,9 @@ std::string normalizeText(const std::string& text) {
     cleaned.erase(cleaned.find_last_not_of(" \t\n\r") + 1);
     // Convert to lowercase
     std::transform(cleaned.begin(), cleaned.end(), cleaned.begin(), ::tolower);
-    // Remove all non-alphanumeric characters except spaces and colons
+    // Remove all non-alphanumeric characters except spaces
     cleaned.erase(std::remove_if(cleaned.begin(), cleaned.end(),
-                  [](unsigned char c) { return !std::isalnum(c) && c != ' ' && c != ':'; }),
+                  [](unsigned char c) { return !std::isalnum(c) && c != ' '; }),
                   cleaned.end());
     // Remove extra spaces
     cleaned.erase(std::unique(cleaned.begin(), cleaned.end(),
@@ -63,48 +78,38 @@ std::string normalizeText(const std::string& text) {
     return cleaned;
 }
 
-// Function to check if two messages are similar (fuzzy matching)
-bool areMessagesSimilar(const std::string& message1, const std::string& message2) {
-    // If the messages are identical, they are similar
-    if (message1 == message2) return true;
-
-    // Calculate the length difference
-    size_t len1 = message1.length();
-    size_t len2 = message2.length();
-    if (std::abs((int)len1 - (int)len2) > 5) return false; // Allow small length differences
-
-    // Count the number of differing characters
-    size_t minLen = std::min(len1, len2);
-    size_t diffCount = 0;
-    for (size_t i = 0; i < minLen; ++i) {
-        if (message1[i] != message2[i]) diffCount++;
-        if (diffCount > 3) return false; // Allow up to 3 character differences
+// Function to split log into three parts: day, time, and main log
+std::tuple<std::string, std::string, std::string> splitLog(const std::string& log) {
+    size_t dayPos = log.find("day");
+    if (dayPos == std::string::npos) {
+        return {"", "", log}; // No day or time found
     }
 
-    return true;
+    // Extract the day part (e.g., "day XXXX")
+    size_t dayEnd = log.find(' ', dayPos + 4); // Skip "day "
+    std::string day = log.substr(dayPos, dayEnd - dayPos);
+
+    // Extract the time part (e.g., "HHMMSS")
+    size_t timeStart = dayEnd + 1; // Skip the space after the day
+    size_t timeEnd = timeStart + 6; // Time is 6 digits (HHMMSS)
+    std::string time = log.substr(timeStart, 6);
+
+    // Extract the main log content
+    std::string mainLog = log.substr(timeEnd + 1); // Skip the space after the time
+
+    return {day, time, mainLog};
 }
 
-// Function to check if the message is new and prevent spam
+// Function to check if the message is new based on time
 bool isNewMessage(const std::string& message) {
-    // Get the current date
-    std::time_t now = std::time(nullptr);
-    std::tm* now_tm = std::localtime(&now);
-    char dateBuffer[11]; // Buffer to store the date in YYYY-MM-DD format
-    std::strftime(dateBuffer, sizeof(dateBuffer), "%Y-%m-%d", now_tm);
-    std::string dateStr(dateBuffer);
-
-    // Combine the message and date to create a unique key
-    std::string messageKey = message + "|" + dateStr;
-
-    // Check if a similar message already exists
-    for (const auto& recentMessage : recentMessages) {
-        if (areMessagesSimilar(recentMessage, messageKey)) return false;
+    auto [day, time, mainLog] = splitLog(message);
+    if (time.empty()) {
+        return false; // Ignore messages without a valid time
     }
 
-    recentMessages.insert(messageKey);
-    if (recentMessages.size() > 10) {
-        recentMessages.erase(recentMessages.begin()); // Keep a rolling window of last 10 messages
-    }
+    if (recentTimes.count(time)) return false;
+
+    recentTimes.insert(time);
     return true;
 }
 
@@ -177,12 +182,20 @@ std::string extractTextFromImage(const cv::Mat& image) {
     return normalizeText(text);
 }
 
+// Function to check if the text indicates a disconnection
+bool isDisconnectionText(const std::string& text) {
+    // If the text is too short or doesn't contain "day", it's likely noise
+    if (text.length() < 5 || text.find("day") == std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
 int main() {
-    sendToDiscord("Starting Simple Logger...");
+    sendToDiscordWithRetry("Starting GAMMA Simple Logger...");
     int rightMonitorX = getRightMonitorXOffset();  // Detect right monitor position
     cv::Rect captureRegion(rightMonitorX + 770, 215, 375, 45);  // Adjust X coordinate
 
-    std::string lastMessage;
     bool isDisconnected = false;
 
     while (true) {
@@ -200,10 +213,10 @@ int main() {
         std::cout << "Extracted Text: " << currentText << std::endl;
 #endif
 
-        // Check if the game is disconnected (e.g., empty text or specific keywords)
-        if (currentText.empty() || currentText.find("disconnected") != std::string::npos) {
+        // Check if the text indicates a disconnection
+        if (isDisconnectionText(currentText)) {
             if (!isDisconnected) {
-                sendToDiscord("Disconnected from the game.");
+                sendToDiscordWithRetry("Disconnected from the game.");
                 isDisconnected = true;
             }
             continue;
@@ -211,10 +224,9 @@ int main() {
             isDisconnected = false;
         }
 
-        // Send the message only if it's new and not a duplicate for the current date
-        if (!currentText.empty() && isNewMessage(currentText) && !areMessagesSimilar(currentText, lastMessage)) {
-            sendToDiscord(currentText);
-            lastMessage = currentText;
+        // Send the log only if the time (HHMMSS) is new
+        if (isNewMessage(currentText)) {
+            sendToDiscordWithRetry(currentText);
         }
 
         std::this_thread::sleep_for(std::chrono::seconds(1));
