@@ -12,12 +12,14 @@
 #include <algorithm>
 #include <cctype>
 #include <unordered_set>
-#include <ctime>
-#include <map>
+#include <vector>
+#include <deque>
 
-// #define DEBUG
+#define DEBUG
 
-std::unordered_set<std::string> recentTimes;
+std::unordered_set<std::string> recentLogs; // Track full log content to avoid duplicates
+std::deque<std::string> logBuffer; // Buffer to store recent logs for clearing old entries
+const int MAX_LOG_BUFFER_SIZE = 100; // Maximum number of logs to keep in the buffer
 
 // Function to send a message to Discord with retries
 bool sendToDiscordWithRetry(const std::string& message, int maxRetries = 3) {
@@ -78,38 +80,78 @@ std::string normalizeText(const std::string& text) {
     return cleaned;
 }
 
-// Function to split log into three parts: day, time, and main log
-std::tuple<std::string, std::string, std::string> splitLog(const std::string& log) {
-    size_t dayPos = log.find("day");
-    if (dayPos == std::string::npos) {
-        return {"", "", log}; // No day or time found
+// Function to fix concatenated "day" issue
+std::string fixConcatenatedDay(const std::string& text) {
+    std::string fixedText = text;
+    size_t pos = 0;
+
+    while ((pos = fixedText.find("day", pos)) != std::string::npos) {
+        // Check if "day" is concatenated with the previous character
+        if (pos > 0 && std::isalnum(fixedText[pos - 1])) {
+            fixedText.insert(pos, " "); // Insert a space before "day"
+            pos += 4; // Move past the inserted space and "day"
+        } else {
+            pos += 3; // Move past "day"
+        }
     }
 
-    // Extract the day part (e.g., "day XXXX")
-    size_t dayEnd = log.find(' ', dayPos + 4); // Skip "day "
-    std::string day = log.substr(dayPos, dayEnd - dayPos);
-
-    // Extract the time part (e.g., "HHMMSS")
-    size_t timeStart = dayEnd + 1; // Skip the space after the day
-    size_t timeEnd = timeStart + 6; // Time is 6 digits (HHMMSS)
-    std::string time = log.substr(timeStart, 6);
-
-    // Extract the main log content
-    std::string mainLog = log.substr(timeEnd + 1); // Skip the space after the time
-
-    return {day, time, mainLog};
+    return fixedText;
 }
 
-// Function to check if the message is new based on time
-bool isNewMessage(const std::string& message) {
-    auto [day, time, mainLog] = splitLog(message);
-    if (time.empty()) {
-        return false; // Ignore messages without a valid time
+// Function to split text into individual logs based on "Day" keyword
+std::vector<std::string> splitLogs(const std::string& text) {
+    std::vector<std::string> logs;
+    size_t startPos = 0;
+    size_t dayPos;
+
+    while ((dayPos = text.find("day", startPos)) != std::string::npos) {
+        if (dayPos == std::string::npos) break; // No more logs found
+
+        // Find the end of the current log (next "day" or end of text)
+        size_t nextDayPos = text.find("day", dayPos + 3);
+        if (nextDayPos == std::string::npos) {
+            logs.push_back(text.substr(dayPos)); // Last log
+            break;
+        }
+
+        // Extract the log entry
+        logs.push_back(text.substr(dayPos, nextDayPos - dayPos));
+        startPos = nextDayPos;
     }
 
-    if (recentTimes.count(time)) return false;
+    return logs;
+}
 
-    recentTimes.insert(time);
+// Function to get only the most recent log (the first log detected)
+std::string getLatestLog(const std::string& text) {
+    // Split the logs based on "day" as you did before
+    std::vector<std::string> logs = splitLogs(text);
+
+    // Return the first log entry (most recent)
+    if (!logs.empty()) {
+        return logs.front();  // Only return the first log entry
+    }
+
+    return ""; // If no logs found, return an empty string
+}
+
+// Function to check if the log is new based on its content
+bool isNewLog(const std::string& log) {
+    if (recentLogs.count(log)) {
+        return false; // Log already sent
+    }
+
+    // Add the log to the recent logs set
+    recentLogs.insert(log);
+    logBuffer.push_back(log);
+
+    // Clear old logs if the buffer exceeds the maximum size
+    if (logBuffer.size() > MAX_LOG_BUFFER_SIZE) {
+        std::string oldestLog = logBuffer.front();
+        logBuffer.pop_front();
+        recentLogs.erase(oldestLog);
+    }
+
     return true;
 }
 
@@ -191,21 +233,10 @@ std::string extractTextFromImage(const cv::Mat& image) {
     return normalizeText(text);
 }
 
-// Function to check if the text indicates a disconnection
-bool isDisconnectionText(const std::string& text) {
-    // If the text is too short or doesn't contain "day", it's likely noise
-    if (text.length() < 5 || text.find("day") == std::string::npos) {
-        return true;
-    }
-    return false;
-}
-
 int main() {
     sendToDiscordWithRetry("Starting GAMMA Simple Logger...");
     int rightMonitorX = getRightMonitorXOffset();  // Detect right monitor position
-    cv::Rect captureRegion(rightMonitorX + 770, 215, 375, 45);  // Adjust X coordinate
-
-    bool isDisconnected = false;
+    cv::Rect captureRegion(rightMonitorX + 770, 215, 375, 500);  // Capture a larger region to include all logs
 
     while (true) {
         cv::Mat capturedFrame = captureScreenRegion(
@@ -216,26 +247,20 @@ int main() {
             continue;
         }
 
-        std::string currentText = extractTextFromImage(capturedFrame);
+        std::string allText = extractTextFromImage(capturedFrame);
+
+        // Fix concatenated "day" issue
+        allText = fixConcatenatedDay(allText);
 
 #ifdef DEBUG
-        std::cout << "Extracted Text: " << currentText << std::endl;
+        std::cout << "Extracted Text: " << allText << std::endl;
 #endif
 
-        // Check if the text indicates a disconnection
-        if (isDisconnectionText(currentText)) {
-            if (!isDisconnected) {
-                sendToDiscordWithRetry("Disconnected from the game.");
-                isDisconnected = true;
-            }
-            continue;
-        } else {
-            isDisconnected = false;
-        }
+        // Get only the most recent log (first detected in the text)
+        std::string latestLog = getLatestLog(allText);
 
-        // Send the log only if the time (HHMMSS) is new
-        if (isNewMessage(currentText)) {
-            sendToDiscordWithRetry(currentText);
+        if (!latestLog.empty() && isNewLog(latestLog)) {
+            sendToDiscordWithRetry(latestLog); // Send only the latest log
         }
 
         std::this_thread::sleep_for(std::chrono::seconds(1));
