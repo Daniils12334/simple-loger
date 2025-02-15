@@ -18,6 +18,7 @@
 #define DEBUG
 
 std::unordered_set<std::string> recentLogs; // Track full log content to avoid duplicates
+std::unordered_set<std::string> sentTimestamps; // Track timestamps to avoid sending the same timestamp again
 std::deque<std::string> logBuffer; // Buffer to store recent logs for clearing old entries
 const int MAX_LOG_BUFFER_SIZE = 100; // Maximum number of logs to keep in the buffer
 
@@ -135,11 +136,25 @@ std::string getLatestLog(const std::string& text) {
     return ""; // If no logs found, return an empty string
 }
 
-// Function to check if the log is new based on its content
-bool isNewLog(const std::string& log) {
-    if (recentLogs.count(log)) {
-        return false; // Log already sent
+// Function to extract timestamp from a log
+std::string extractTimestamp(const std::string& log) {
+    size_t pos = log.find("day");
+    if (pos != std::string::npos) {
+        return log.substr(pos, 15);  // Extract timestamp in the format "day <num> <time>"
     }
+    return "";
+}
+
+// Function to check if the log is new based on its content and timestamp
+bool isNewLog(const std::string& log) {
+    // Extract timestamp and check if it was already sent
+    std::string timestamp = extractTimestamp(log);
+    if (!timestamp.empty() && sentTimestamps.count(timestamp)) {
+        return false; // Log with the same timestamp has already been sent
+    }
+
+    // Add the timestamp to the sentTimestamps set to avoid future duplicates
+    sentTimestamps.insert(timestamp);
 
     // Add the log to the recent logs set
     recentLogs.insert(log);
@@ -149,6 +164,10 @@ bool isNewLog(const std::string& log) {
     if (logBuffer.size() > MAX_LOG_BUFFER_SIZE) {
         std::string oldestLog = logBuffer.front();
         logBuffer.pop_front();
+        std::string oldestTimestamp = extractTimestamp(oldestLog);
+        if (!oldestTimestamp.empty()) {
+            sentTimestamps.erase(oldestTimestamp);  // Remove timestamp from the set
+        }
         recentLogs.erase(oldestLog);
     }
 
@@ -260,7 +279,8 @@ int main() {
         std::string latestLog = getLatestLog(allText);
 
         if (!latestLog.empty() && isNewLog(latestLog)) {
-            sendToDiscordWithRetry(latestLog); // Send only the latest log
+            // Send log to Discord only if it is new
+            sendToDiscordWithRetry(latestLog); 
         }
 
         std::this_thread::sleep_for(std::chrono::seconds(1));
