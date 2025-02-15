@@ -9,18 +9,18 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/extensions/Xinerama.h>
-#include <algorithm>
-#include <cctype>
 #include <unordered_set>
 #include <vector>
 #include <deque>
 
-#define DEBUG
+// #define DEBUG
 
 std::unordered_set<std::string> recentLogs; // Track full log content to avoid duplicates
 std::unordered_set<std::string> sentTimestamps; // Track timestamps to avoid sending the same timestamp again
 std::deque<std::string> logBuffer; // Buffer to store recent logs for clearing old entries
 const int MAX_LOG_BUFFER_SIZE = 100; // Maximum number of logs to keep in the buffer
+
+bool isDisconnectedSent = false; // Flag to track if the "Logger disconnected" message has been sent
 
 // Function to send a message to Discord with retries
 bool sendToDiscordWithRetry(const std::string& message, int maxRetries = 3) {
@@ -174,6 +174,15 @@ bool isNewLog(const std::string& log) {
     return true;
 }
 
+// Function to check if the text contains valid log content
+bool isValidLog(const std::string& text) {
+    // A valid log should contain the word "day" followed by a number and timestamp
+    if (text.find("day") != std::string::npos && text.find(" ") != std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
 int getRightMonitorXOffset() {
     Display* display = XOpenDisplay(nullptr);
     if (!display) {
@@ -274,6 +283,19 @@ int main() {
 #ifdef DEBUG
         std::cout << "Extracted Text: " << allText << std::endl;
 #endif
+
+        // Check if the extracted text is a valid log
+        if (!isValidLog(allText)) {
+            // If not a valid log, check if the "disconnected" message has been sent
+            if (!isDisconnectedSent) {
+                sendToDiscordWithRetry("Logger disconnected");
+                isDisconnectedSent = true;
+            }
+            continue; // Skip if the text is garbage or not a valid log
+        }
+
+        // Reset the disconnected flag when valid logs are found
+        isDisconnectedSent = false;
 
         // Get only the most recent log (first detected in the text)
         std::string latestLog = getLatestLog(allText);
