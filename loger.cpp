@@ -15,7 +15,7 @@
 #include <ctime>
 #include <map>
 
-#define DEBUG
+// #define DEBUG
 
 std::unordered_set<std::string> recentTimes;
 
@@ -28,7 +28,7 @@ bool sendToDiscordWithRetry(const std::string& message, int maxRetries = 3) {
     for (int retry = 0; retry < maxRetries; retry++) {
         curl = curl_easy_init();
         if (curl) {
-            const std::string webhook_url = "https://discord.com/api/webhooks/1334124265104085044/i4F99g9T1-5rydCr7qbgJ5WHLCPkdpR-098MCv4eFU9BJzwCTvrp7IeIe96_ICTepj5K";
+            const std::string webhook_url = "https://discordapp.com/api/webhooks/1336647048367177789/4v_Za4HGbhqO9devyeq0Z3lIVCOGHUwwOLfFzRUvrwhiySIn6onzq5mlomHMeBwuL0kk";
 
             // Escape newlines and quotes to keep valid JSON format
             std::string json_payload = R"({"content": ")" + message + R"("})";
@@ -145,21 +145,30 @@ cv::Mat captureScreenRegion(int x, int y, int width, int height) {
 
     cv::Mat mat(height, width, CV_8UC4, img->data);  // BGRA image
     if (mat.channels() == 4) {
-        cv::cvtColor(mat, mat, cv::COLOR_BGRA2BGR);
+        cv::cvtColor(mat, mat, cv::COLOR_BGRA2BGR); // Convert to BGR (3 channels)
     }
 
+    // Split the image into its color channels (B, G, R)
     std::vector<cv::Mat> channels(3);
     cv::split(mat, channels);
+
+    // Extract the red and green channels
     cv::Mat redMat = channels[2];  // Red channel is the third one (index 2)
+    cv::Mat greenMat = channels[1]; // Green channel is the second one (index 1)
+
+    // Combine the red and green channels
+    cv::Mat combinedMat;
+    cv::addWeighted(redMat, 0.5, greenMat, 0.5, 0, combinedMat);
 
 #ifdef DEBUG
-    cv::imshow("Processed Frame", redMat);
+    cv::imshow("Processed Frame (Red + Green Channels)", combinedMat);
     cv::waitKey(1);
 #endif
+
     XDestroyImage(img);
     XCloseDisplay(display);
 
-    return redMat;
+    return combinedMat;
 }
 
 std::string extractTextFromImage(const cv::Mat& image) {
