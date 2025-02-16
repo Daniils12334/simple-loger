@@ -31,7 +31,7 @@ bool sendToDiscordWithRetry(const std::string& message, int maxRetries = 3) {
     for (int retry = 0; retry < maxRetries; retry++) {
         curl = curl_easy_init();
         if (curl) {
-            const std::string webhook_url = "https://discordapp.com/api/webhooks/1336647048367177789/4v_Za4HGbhqO9devyeq0Z3lIVCOGHUwwOLfFzRUvrwhiySIn6onzq5mlomHMeBwuL0kk";
+            const std::string webhook_url = "DISCORD_WEBHOOK_URL";
 
             // Escape newlines and quotes to keep valid JSON format
             std::string json_payload = R"({"content": ")" + message + R"("})";
